@@ -7,6 +7,7 @@
 --
 -- Single-player: there is one game per server, shared by everyone in it.
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shop = require(script.Shop)
@@ -14,6 +15,7 @@ local Roster = require(script.Roster)
 local Enemies = require(script.Enemies)
 local Combat = require(script.Combat)
 local Arena = require(script.Arena)
+local Progress = require(script.Progress)
 local Stars = require(ReplicatedStorage.Shared.Stars)
 local Traits = require(ReplicatedStorage.Shared.Traits)
 local Levels = require(ReplicatedStorage.Shared.Levels)
@@ -58,7 +60,8 @@ end
 -- the client rebuilds stats, traits and abilities with the shared modules.
 -- Sold shop slots and "no next level" are `false`, because nil doesn't
 -- survive being sent through a remote inside a table.
-local function snapshot()
+-- Per player, because each player has their own saved best.
+local function snapshot(player: Player)
 	local offers = {}
 	for slot = 1, Shop.SIZE do
 		local offer = shop.offers[slot]
@@ -82,11 +85,26 @@ local function snapshot()
 		benchSize = Roster.BENCH_SIZE,
 		enemy = describe(Enemies.forRound(round)),
 		rerollCost = Shop.REROLL_COST,
+		best = Progress.get(player),
 	}
 end
 
 local function broadcast()
-	stateRemote:FireAllClients(snapshot())
+	for _, player in Players:GetPlayers() do
+		stateRemote:FireClient(player, snapshot(player))
+	end
+end
+
+-- Save the finished run for everyone playing. Returns true if anyone set a new best.
+local function recordRun(won: boolean): boolean
+	local result = if won then Enemies.COUNT + 1 else round
+	local anyNewBest = false
+	for _, player in Players:GetPlayers() do
+		if Progress.record(player, result) then
+			anyNewBest = true
+		end
+	end
+	return anyNewBest
 end
 
 local function redraw()
@@ -166,6 +184,9 @@ local function fight()
 		if round >= Enemies.COUNT then
 			phase = "won"
 			message = `You beat all {Enemies.COUNT} rounds with {health} health left. You win!`
+			if recordRun(true) then
+				message ..= " New best!"
+			end
 			return
 		end
 		message = `Round {round}: Victory! +{ROUND_INCOME} gold`
@@ -175,6 +196,9 @@ local function fight()
 		if health == 0 then
 			phase = "gameover"
 			message = `Knocked out in round {round}. Game over.`
+			if recordRun(false) then
+				message ..= " New best!"
+			end
 			return
 		end
 		message = `Round {round}: {result}. You lose {damage} health. +{ROUND_INCOME} gold`
@@ -227,10 +251,10 @@ local function buyXp()
 	end
 end
 
-actionRemote.OnServerEvent:Connect(function(player, action, arg1, arg2)
+actionRemote.OnServerEvent:Connect(function(player, action, arg1, arg2, arg3, arg4)
 	-- A client asks for the current state when its UI first loads.
 	if action == "sync" then
-		stateRemote:FireClient(player, snapshot())
+		stateRemote:FireClient(player, snapshot(player))
 		return
 	end
 
@@ -258,6 +282,16 @@ actionRemote.OnServerEvent:Connect(function(player, action, arg1, arg2)
 		local ok, err = roster:Move(arg1, arg2)
 		message = if ok then "Moved" else `Can't move: {err}`
 		redraw()
+	elseif
+		action == "swap"
+		and isZone(arg1)
+		and isIndex(arg2, zoneSize(arg1))
+		and isZone(arg3)
+		and isIndex(arg4, zoneSize(arg3))
+	then
+		local ok, err = roster:Swap(arg1, arg2, arg3, arg4)
+		message = if ok then "Swapped" else `Can't swap: {err}`
+		redraw()
 	elseif action == "reroll" then
 		message = if shop:Reroll() then "Rerolled" else "Not enough gold to reroll"
 	elseif action == "buyxp" then
@@ -271,4 +305,18 @@ actionRemote.OnServerEvent:Connect(function(player, action, arg1, arg2)
 	broadcast()
 end)
 
+-- Load each player's saved best, then send them fresh state so the UI shows it.
+local function onPlayerAdded(player: Player)
+	Progress.load(player)
+	stateRemote:FireClient(player, snapshot(player))
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(Progress.forget)
+
 newRun()
+
+-- Players who joined before this script connected PlayerAdded.
+for _, player in Players:GetPlayers() do
+	task.spawn(onPlayerAdded, player)
+end

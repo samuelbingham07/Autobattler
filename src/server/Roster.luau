@@ -132,6 +132,19 @@ function Roster.Move(self: Roster, from: Zone, index: number): (boolean, string?
 	return true, nil
 end
 
+-- Swap two units, on the same row or between board and bench.
+-- Returns false plus a reason if either slot is empty.
+function Roster.Swap(self: Roster, zoneA: Zone, indexA: number, zoneB: Zone, indexB: number): (boolean, string?)
+	local rowA, rowB = self:GetZone(zoneA), self:GetZone(zoneB)
+	local unitA, unitB = rowA:Get(indexA), rowB:Get(indexB)
+	if not unitA or not unitB then
+		return false, "both slots need a unit"
+	end
+	rowA:Set(indexA, unitB)
+	rowB:Set(indexB, unitA)
+	return true, nil
+end
+
 function Roster.Sell(self: Roster, zone: Zone, index: number): StarredUnit?
 	return self:GetZone(zone):Remove(index)
 end

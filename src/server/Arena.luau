@@ -1,16 +1,19 @@
 --!strict
--- Draws both boards on the baseplate: a pad per slot, a block per unit,
+-- Draws both boards on the baseplate: a pad per slot, a character per unit,
 -- and a floating name, health bar and mana bar over each unit.
--- Also replays fights from Combat.
+-- Also replays fights from Combat, with damage numbers and sounds.
 --
 -- Layout, seen from above (z axis):
 --   enemy slot ... 2, 1  |  center  |  your slot 1, 2 ...
 -- Slot 1 on each side is the frontline, closest to the middle.
+-- Characters face the middle.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
 local Stars = require(ReplicatedStorage.Shared.Stars)
 local Combat = require(script.Parent.Combat)
+local UnitModels = require(script.Parent.UnitModels)
 
 type Unit = Stars.StarredUnit
 type Side = "player" | "enemy"
@@ -25,13 +28,13 @@ local TEAM_COLORS: { [Side]: Color3 } = {
 	enemy = Color3.fromRGB(220, 70, 70),
 }
 
--- Pricier units are bigger blocks, and each extra star adds a bit more.
-local UNIT_SIZE_BY_COST: { [number]: number } = {
-	[1] = 3,
-	[2] = 3.75,
-	[3] = 4.5,
+-- Pricier units are bigger, and each extra star adds a bit more.
+local SCALE_BY_COST: { [number]: number } = {
+	[1] = 1,
+	[2] = 1.15,
+	[3] = 1.3,
 }
-local SIZE_PER_STAR = 0.15
+local SCALE_PER_STAR = 0.15
 
 local LUNGE_DISTANCE = 1.5
 -- Out and back (reverses = true), quick enough to finish before the unit's next attack.
@@ -45,17 +48,28 @@ local MANA_COLOR = Color3.fromRGB(80, 160, 255)
 local HIT_FLASH = Color3.new(1, 1, 1)
 local HEAL_FLASH = Color3.fromRGB(120, 255, 140)
 local CAST_TEXT = Color3.fromRGB(255, 220, 90)
+local DAMAGE_TEXT = Color3.fromRGB(255, 235, 235)
+local HEAL_TEXT = Color3.fromRGB(120, 255, 140)
+
+-- Built-in Roblox sounds (they ship with Studio and the client, so no upload needed).
+-- Swap in any sound asset id, e.g. "rbxassetid://123456", to change them.
+local SOUNDS = {
+	attack = { id = "rbxasset://sounds/swordslash.wav", volume = 0.25 },
+	cast = { id = "rbxasset://sounds/electronicpingshort.wav", volume = 0.5 },
+	death = { id = "rbxasset://sounds/uuhhh.mp3", volume = 0.5 },
+}
 
 export type UnitView = {
-	part: Part,
+	model: Model,
+	body: BasePart, -- the model's PrimaryPart; move this to move the character
 	fill: Frame,
 	hpLabel: TextLabel,
 	manaFill: Frame,
 	maxHealth: number,
 	maxMana: number,
-	size: number,
+	top: number, -- studs from body center to top of head
 	color: Color3,
-	home: Vector3, -- resting position, so attack lunges always return to the same spot
+	home: CFrame, -- resting CFrame, so attack lunges always return to the same spot
 	side: Side,
 }
 
@@ -112,6 +126,15 @@ local function makeBar(parent: Instance, y: number, height: number, fillColor: C
 	return bar, fill
 end
 
+local function playSound(parent: Instance, sound: { id: string, volume: number })
+	local instance = Instance.new("Sound")
+	instance.SoundId = sound.id
+	instance.Volume = sound.volume
+	instance.Parent = parent
+	instance:Play()
+	Debris:AddItem(instance, 3) -- clean up after it finishes
+end
+
 local Arena = {}
 
 function Arena.SetHealth(view: UnitView, health: number)
@@ -120,7 +143,11 @@ function Arena.SetHealth(view: UnitView, health: number)
 	view.fill.BackgroundColor3 = HEALTH_EMPTY:Lerp(HEALTH_FULL, fraction)
 	view.hpLabel.Text = `{health}/{view.maxHealth}`
 	if health <= 0 then
-		view.part.Transparency = 0.8
+		for _, part in view.model:GetDescendants() do
+			if part:IsA("BasePart") then
+				part.Transparency = 0.8
+			end
+		end
 	end
 end
 
@@ -129,23 +156,27 @@ function Arena.SetMana(view: UnitView, mana: number)
 end
 
 local function makeUnit(parent: Instance, unit: Unit, side: Side, index: number): UnitView
-	local size = (UNIT_SIZE_BY_COST[unit.cost] or 3) * (1 + SIZE_PER_STAR * (unit.stars - 1))
+	local scale = (SCALE_BY_COST[unit.cost] or 1) * (1 + SCALE_PER_STAR * (unit.stars - 1))
 
-	local part = Instance.new("Part")
-	part.Name = Stars.displayName(unit)
-	part.Anchored = true
-	part.Size = Vector3.new(size, size, size)
-	part.Position = slotPosition(side, index) + Vector3.new(0, 0.2 + size / 2, 0)
-	part.Color = TEAM_COLORS[side]
-	part.Material = Enum.Material.SmoothPlastic
-	part.Parent = parent
+	local model = UnitModels.build(unit.name, TEAM_COLORS[side])
+	model.Name = Stars.displayName(unit)
+	model:ScaleTo(scale)
 
-	-- Floating label. Size is in studs, so it shrinks with distance like the block does.
+	-- Stand on the pad, facing the middle of the arena.
+	local position = slotPosition(side, index) + Vector3.new(0, 0.2 + UnitModels.BOTTOM * scale, 0)
+	local facing = if side == "player" then Vector3.new(0, 0, -1) else Vector3.new(0, 0, 1)
+	model:PivotTo(CFrame.lookAt(position, position + facing))
+	model.Parent = parent
+
+	local body = model.PrimaryPart :: BasePart
+	local top = UnitModels.TOP * scale
+
+	-- Floating label. Size is in studs, so it shrinks with distance like the model does.
 	local gui = Instance.new("BillboardGui")
 	gui.Size = UDim2.new(5, 0, 1.9, 0)
-	gui.StudsOffset = Vector3.new(0, size / 2 + 1.6, 0)
+	gui.StudsOffset = Vector3.new(0, top + 1.2, 0)
 	gui.AlwaysOnTop = true
-	gui.Parent = part
+	gui.Parent = body
 
 	local nameArea = Instance.new("Frame")
 	nameArea.BackgroundTransparency = 1
@@ -160,15 +191,16 @@ local function makeUnit(parent: Instance, unit: Unit, side: Side, index: number)
 	local _, manaFill = makeBar(gui, 0.86, 0.14, MANA_COLOR)
 
 	local view: UnitView = {
-		part = part,
+		model = model,
+		body = body,
 		fill = fill,
 		hpLabel = hpLabel,
 		manaFill = manaFill,
 		maxHealth = unit.health,
 		maxMana = unit.ability.mana,
-		size = size,
-		color = part.Color,
-		home = part.Position,
+		top = top,
+		color = body.Color,
+		home = body.CFrame,
 		side = side,
 	}
 	Arena.SetHealth(view, unit.health)
@@ -209,27 +241,28 @@ local function sideViews(view: ArenaView, side: Side): { UnitView }
 	return if side == "player" then view.player else view.enemy
 end
 
--- Attacker hops toward the enemy side and back.
+-- Attacker steps forward (its own -Z, which faces the enemy) and back.
 local function lunge(view: UnitView)
-	local direction = if view.side == "player" then -1 else 1
-	local target = view.home + Vector3.new(0, 0, direction * LUNGE_DISTANCE)
-	view.part.Position = view.home
-	TweenService:Create(view.part, LUNGE_TWEEN, { Position = target }):Play()
+	view.body.CFrame = view.home
+	local target = view.home * CFrame.new(0, 0, -LUNGE_DISTANCE)
+	TweenService:Create(view.body, LUNGE_TWEEN, { CFrame = target }):Play()
 end
 
--- Unit flashes a color, then fades back to its team color.
+-- Body flashes a color, then fades back to its team color.
 local function flash(view: UnitView, color: Color3)
-	view.part.Color = color
-	TweenService:Create(view.part, FLASH_TWEEN, { Color = view.color }):Play()
+	view.body.Color = color
+	TweenService:Create(view.body, FLASH_TWEEN, { Color = view.color }):Play()
 end
 
--- Text that floats up from a unit and fades out, e.g. an ability name.
-local function popText(view: UnitView, text: string, color: Color3)
+-- Text that floats up from a unit and fades out: ability names, damage, heals.
+-- Damage numbers get a little sideways jitter so rapid hits don't stack exactly.
+local function popText(view: UnitView, text: string, color: Color3, height: number, jitter: boolean)
 	local gui = Instance.new("BillboardGui")
-	gui.Size = UDim2.new(6, 0, 1.2, 0)
-	gui.StudsOffset = Vector3.new(0, view.size / 2 + 3.8, 0)
+	gui.Size = UDim2.new(6, 0, height, 0)
+	local x = if jitter then (math.random() - 0.5) * 2 else 0
+	gui.StudsOffset = Vector3.new(x, view.top + 3.4, 0)
 	gui.AlwaysOnTop = true
-	gui.Parent = view.part
+	gui.Parent = view.body
 
 	local label = makeLabel(gui, text)
 	label.TextColor3 = color
@@ -253,19 +286,28 @@ function Arena.Replay(view: ArenaView, events: { Combat.CombatEvent }, speed: nu
 
 		local actor = sideViews(view, event.side)[event.index]
 		if event.kind == "cast" then
-			popText(actor, `{event.abilityName}!`, CAST_TEXT)
+			popText(actor, `{event.abilityName}!`, CAST_TEXT, 1.2, false)
+			playSound(actor.body, SOUNDS.cast)
 		else
 			lunge(actor)
+			playSound(actor.body, SOUNDS.attack)
 		end
 		Arena.SetMana(actor, event.mana)
 
 		for _, effect in event.effects do
 			local target = sideViews(view, effect.side)[effect.index]
-			flash(target, if effect.heal then HEAL_FLASH else HIT_FLASH)
+			if effect.heal then
+				flash(target, HEAL_FLASH)
+				popText(target, `+{effect.amount}`, HEAL_TEXT, 0.9, true)
+			else
+				flash(target, HIT_FLASH)
+				popText(target, `-{effect.amount}`, DAMAGE_TEXT, 0.9, true)
+			end
 			Arena.SetHealth(target, effect.health)
 			Arena.SetMana(target, effect.mana)
 			if effect.health <= 0 then
-				print(`{target.part.Name} ({effect.side}) dies at {string.format("%.1f", event.time)}s`)
+				playSound(target.body, SOUNDS.death)
+				print(`{target.model.Name} ({effect.side}) dies at {string.format("%.1f", event.time)}s`)
 			end
 		end
 	end

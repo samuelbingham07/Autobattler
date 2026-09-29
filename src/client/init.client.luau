@@ -88,7 +88,7 @@ local function makeRow(order: number, height: number): Frame
 	return row
 end
 
-local statusLabel = makeLabel(1, 22, 18)
+local statusLabel = makeLabel(1, 22, 16)
 local messageLabel = makeLabel(2, 18, 14)
 messageLabel.TextColor3 = Color3.fromRGB(255, 220, 120)
 local enemyLabel = makeLabel(3, 16, 13)
@@ -203,19 +203,29 @@ end
 
 local render -- defined below; unit buttons call it to show a new selection
 
--- One row of owned units (board or bench). Clicking a unit selects it.
+-- One row of owned units (board or bench).
+-- Click a unit to select it. With a unit selected: click it again to deselect,
+-- click another unit to swap the two, or click an empty slot on the other row
+-- to move it there.
 local function renderUnits(row: Frame, zone: string, list, size: number, width: number, color: Color3, planning: boolean)
 	clearButtons(row)
 	for index = 1, size do
 		local entry = list[index]
+		local isSelected = selected and selected.zone == zone and selected.index == index
 		if entry then
 			local unit = Stars.make(entry.name, entry.stars)
 			local button = makeButton(row, width, `{Stars.displayName(unit)}\n{statLine(unit)}`, color, planning, function()
-				local already = selected and selected.zone == zone and selected.index == index
-				selected = if already then nil else { zone = zone, index = index }
-				render(lastState)
+				if not selected then
+					selected = { zone = zone, index = index }
+					render(lastState)
+				elseif isSelected then
+					selected = nil
+					render(lastState)
+				else
+					actionRemote:FireServer("swap", selected.zone, selected.index, zone, index)
+				end
 			end)
-			if selected and selected.zone == zone and selected.index == index then
+			if isSelected then
 				local stroke = Instance.new("UIStroke")
 				stroke.Color = Color3.new(1, 1, 1)
 				stroke.Thickness = 3
@@ -223,7 +233,11 @@ local function renderUnits(row: Frame, zone: string, list, size: number, width: 
 				stroke.Parent = button
 			end
 		else
-			makeButton(row, width, "empty", EMPTY_COLOR, false, function() end)
+			-- Units always fill from the front, so "move here" means "move to this row".
+			local canMoveHere = planning and selected ~= nil and selected.zone ~= zone
+			makeButton(row, width, if canMoveHere then "move here" else "empty", EMPTY_COLOR, canMoveHere, function()
+				actionRemote:FireServer("move", selected.zone, selected.index)
+			end)
 		end
 	end
 end
@@ -242,13 +256,14 @@ local function renderActions(state, planning: boolean)
 	local list = if selected then state[selected.zone] else nil
 	local entry = if list then list[selected.index] else nil
 	if not planning or not entry then
-		makeButton(actionRow, 300, "Click a unit to move or sell it", EMPTY_COLOR, false, function() end)
+		makeButton(actionRow, 300, "Click a unit to select it", EMPTY_COLOR, false, function() end)
 		return
 	end
 
 	local unit = Stars.make(entry.name, entry.stars)
 	local ability = unit.ability
-	detailLabel.Text = `{Stars.displayName(unit)}  [{table.concat(unit.traits, ", ")}]   {ability.name} ({ability.mana} mana): {abilityText(ability)}`
+	detailLabel.Text = `{Stars.displayName(unit)}  [{table.concat(unit.traits, ", ")}]   {ability.name} ({ability.mana} mana): {abilityText(ability)}.`
+		.. "   Click another unit to swap places."
 
 	local zone, index = selected.zone, selected.index
 	local moveText = if zone == "board" then "Move to bench" else "Move to board"
@@ -320,8 +335,19 @@ function render(state)
 		won = "Victory!",
 	})[state.phase]
 	local levelText = if state.xpToNext then `Level {state.level} ({state.xp}/{state.xpToNext} XP)` else `Level {state.level} (max)`
+	local bestText = if state.best == 0
+		then "none yet"
+		elseif state.best > state.totalRounds then "won!"
+		else `round {state.best}`
 
-	statusLabel.Text = `Round {state.round}/{state.totalRounds}   ·   Health {state.health}   ·   {state.gold} gold   ·   {levelText}   ·   {phaseText}`
+	statusLabel.Text = table.concat({
+		`Round {state.round}/{state.totalRounds}`,
+		`Health {state.health}`,
+		`{state.gold} gold`,
+		levelText,
+		phaseText,
+		`Best: {bestText}`,
+	}, "  ·  ")
 	messageLabel.Text = state.message
 	enemyLabel.Text = `Enemy this round: {unitNames(state.enemy)}`
 
