@@ -1,28 +1,47 @@
 --!strict
 -- Resolves a fight between two lists of units, instantly (no waiting).
 -- Units always attack the front-most living enemy, so board slot 1 is your frontline.
--- Returns the result plus a list of every attack, which Arena can replay.
+--
+-- Mana: units gain mana when they attack and when they're hit. On a unit's turn,
+-- if its mana is full it casts its ability instead of attacking, then drops to 0.
+--
+-- Returns the result plus a list of every action, which Arena can replay.
+-- Pass in units that already have trait bonuses applied (Traits.apply).
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Stars = require(ReplicatedStorage.Shared.Stars)
+local Units = require(ReplicatedStorage.Shared.Units)
 
 type Unit = Stars.StarredUnit
 
 -- Seconds of simulated fight time before it's called a draw.
 local TIME_LIMIT = 30
+local MANA_PER_ATTACK = 10
+local MANA_PER_HIT_TAKEN = 5
 
 export type Result = "Victory" | "Defeat" | "Draw"
 export type Side = "player" | "enemy"
 
--- One attack. Indexes are positions in the unit lists passed to Fight.
+-- One unit's state after being hit or healed.
+export type Effect = {
+	side: Side,
+	index: number,
+	heal: boolean,
+	amount: number,
+	health: number, -- after the effect
+	mana: number, -- after the effect
+}
+
+-- One action: a basic attack or an ability cast. Indexes are positions in the
+-- unit lists passed to Fight.
 export type CombatEvent = {
 	time: number,
-	attackerSide: Side,
-	attackerIndex: number,
-	targetSide: Side,
-	targetIndex: number,
-	damage: number,
-	targetHealth: number, -- health left after the hit
+	kind: "attack" | "cast",
+	side: Side,
+	index: number,
+	abilityName: string?, -- set for casts
+	mana: number, -- the acting unit's mana after acting
+	effects: { Effect },
 }
 
 local SIDE_LABELS: { [Side]: string } = {
@@ -38,8 +57,10 @@ type Fighter = {
 	health: number,
 	maxHealth: number,
 	damage: number,
-	interval: number, -- seconds between attacks
-	nextAttack: number, -- simulated time of this unit's next attack
+	interval: number, -- seconds between actions
+	nextAction: number, -- simulated time of this unit's next action
+	mana: number,
+	ability: Units.Ability,
 }
 
 local function makeFighters(units: { Unit }, side: Side): { Fighter }
@@ -54,37 +75,101 @@ local function makeFighters(units: { Unit }, side: Side): { Fighter }
 			maxHealth = unit.health,
 			damage = unit.damage,
 			interval = interval,
-			nextAttack = interval,
+			nextAction = interval,
+			mana = 0,
+			ability = unit.ability,
 		})
 	end
 	return fighters
 end
 
-local function firstAlive(fighters: { Fighter }): Fighter?
+local function alive(fighters: { Fighter }): { Fighter }
+	local living = {}
 	for _, fighter in fighters do
 		if fighter.health > 0 then
-			return fighter
+			table.insert(living, fighter)
 		end
 	end
-	return nil
+	return living
 end
 
 local function label(fighter: Fighter): string
 	return `{SIDE_LABELS[fighter.side]} {fighter.name}`
 end
 
-local function printSurvivors(fighters: { Fighter })
-	for _, fighter in fighters do
-		if fighter.health > 0 then
-			print(`  {label(fighter)} survives ({fighter.health}/{fighter.maxHealth})`)
+local function snapshotEffect(target: Fighter, heal: boolean, amount: number): Effect
+	return {
+		side = target.side,
+		index = target.index,
+		heal = heal,
+		amount = amount,
+		health = target.health,
+		mana = target.mana,
+	}
+end
+
+local function hit(target: Fighter, amount: number): Effect
+	target.health = math.max(0, target.health - amount)
+	if target.health > 0 then
+		target.mana = math.min(target.ability.mana, target.mana + MANA_PER_HIT_TAKEN)
+	end
+	return snapshotEffect(target, false, amount)
+end
+
+local function heal(target: Fighter, amount: number): Effect
+	target.health = math.min(target.maxHealth, target.health + amount)
+	return snapshotEffect(target, true, amount)
+end
+
+-- Work out who an ability affects and apply it.
+local function cast(caster: Fighter, allies: { Fighter }, foes: { Fighter }): { Effect }
+	local ability = caster.ability
+	local livingFoes = alive(foes)
+	local effects = {}
+
+	if ability.kind == "healSelf" then
+		table.insert(effects, heal(caster, ability.power))
+	elseif ability.kind == "healAllies" then
+		for _, ally in alive(allies) do
+			table.insert(effects, heal(ally, ability.power))
 		end
+	elseif ability.kind == "damageAll" then
+		for _, foe in livingFoes do
+			table.insert(effects, hit(foe, ability.power))
+		end
+	elseif ability.kind == "damageBack" then
+		table.insert(effects, hit(livingFoes[#livingFoes], ability.power))
+	elseif ability.kind == "damageFront" then
+		for i = 1, math.min(ability.count or 1, #livingFoes) do
+			table.insert(effects, hit(livingFoes[i], ability.power))
+		end
+	end
+	return effects
+end
+
+local function printEvent(event: CombatEvent, actor: Fighter, player: { Fighter }, enemy: { Fighter })
+	local what = if event.kind == "cast" then `casts {event.abilityName}` else "attacks"
+	print(`[{string.format("%5.2f", event.time)}s] {label(actor)} {what}`)
+	for _, effect in event.effects do
+		local target = (if effect.side == "player" then player else enemy)[effect.index]
+		local verb = if effect.heal then "healed" else "hit"
+		print(`    {label(target)} {verb} for {effect.amount} ({effect.health}/{target.maxHealth})`)
+		if effect.health == 0 then
+			print(`    {label(target)} dies`)
+		end
+	end
+end
+
+local function printSurvivors(fighters: { Fighter })
+	for _, fighter in alive(fighters) do
+		print(`  {label(fighter)} survives ({fighter.health}/{fighter.maxHealth})`)
 	end
 end
 
 local Combat = {}
 
 -- Pass verbose = false to print nothing (e.g. when Arena will replay the fight instead).
--- Returns the result, every attack in order, and how many enemy units survived.
+-- Returns the result, every action in order, and how many enemy units survived.
 function Combat.Fight(
 	playerUnits: { Unit },
 	enemyUnits: { Unit },
@@ -101,8 +186,8 @@ function Combat.Fight(
 
 	local result: Result = "Draw"
 	while true do
-		local playerAlive = firstAlive(player) ~= nil
-		local enemyAlive = firstAlive(enemy) ~= nil
+		local playerAlive = #alive(player) > 0
+		local enemyAlive = #alive(enemy) > 0
 		if not playerAlive and not enemyAlive then
 			result = "Draw"
 			break
@@ -114,27 +199,23 @@ function Combat.Fight(
 			break
 		end
 
-		-- Whoever's next attack comes soonest goes next. On a tie, your units go first.
-		local attacker: Fighter? = nil
-		local foes: { Fighter } = enemy
-		for _, fighter in player do
-			if fighter.health > 0 and (not attacker or fighter.nextAttack < attacker.nextAttack) then
-				attacker = fighter
-				foes = enemy
+		-- Whoever's next action comes soonest goes next. On a tie, your units go first.
+		local actor: Fighter? = nil
+		for _, fighter in alive(player) do
+			if not actor or fighter.nextAction < actor.nextAction then
+				actor = fighter
 			end
 		end
-		for _, fighter in enemy do
-			if fighter.health > 0 and (not attacker or fighter.nextAttack < attacker.nextAttack) then
-				attacker = fighter
-				foes = player
+		for _, fighter in alive(enemy) do
+			if not actor or fighter.nextAction < actor.nextAction then
+				actor = fighter
 			end
 		end
-		local target = firstAlive(foes)
-		if not attacker or not target then
+		if not actor then
 			break -- unreachable: both sides have a living unit
 		end
 
-		local time = attacker.nextAttack
+		local time = actor.nextAction
 		if time > TIME_LIMIT then
 			if show then
 				print(`Time limit ({TIME_LIMIT}s) reached`)
@@ -143,27 +224,40 @@ function Combat.Fight(
 			break
 		end
 
-		target.health = math.max(0, target.health - attacker.damage)
-		attacker.nextAttack += attacker.interval
+		local allies = if actor.side == "player" then player else enemy
+		local foes = if actor.side == "player" then enemy else player
 
-		table.insert(events, {
-			time = time,
-			attackerSide = attacker.side,
-			attackerIndex = attacker.index,
-			targetSide = target.side,
-			targetIndex = target.index,
-			damage = attacker.damage,
-			targetHealth = target.health,
-		})
+		local event: CombatEvent
+		if actor.mana >= actor.ability.mana then
+			actor.mana = 0
+			local effects = cast(actor, allies, foes)
+			event = {
+				time = time,
+				kind = "cast",
+				side = actor.side,
+				index = actor.index,
+				abilityName = actor.ability.name,
+				mana = actor.mana,
+				effects = effects,
+			}
+		else
+			local target = alive(foes)[1]
+			local effect = hit(target, actor.damage)
+			actor.mana = math.min(actor.ability.mana, actor.mana + MANA_PER_ATTACK)
+			event = {
+				time = time,
+				kind = "attack",
+				side = actor.side,
+				index = actor.index,
+				mana = actor.mana,
+				effects = { effect },
+			}
+		end
+		actor.nextAction += actor.interval
+		table.insert(events, event)
 
 		if show then
-			print(
-				`[{string.format("%5.2f", time)}s] {label(attacker)} hits {label(target)}`
-					.. ` for {attacker.damage} ({target.health}/{target.maxHealth})`
-			)
-			if target.health == 0 then
-				print(`  {label(target)} dies`)
-			end
+			printEvent(event, actor, player, enemy)
 		end
 	end
 
@@ -172,14 +266,7 @@ function Combat.Fight(
 		printSurvivors(player)
 		printSurvivors(enemy)
 	end
-
-	local enemySurvivors = 0
-	for _, fighter in enemy do
-		if fighter.health > 0 then
-			enemySurvivors += 1
-		end
-	end
-	return result, events, enemySurvivors
+	return result, events, #alive(enemy)
 end
 
 return Combat

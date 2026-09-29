@@ -27,8 +27,8 @@ type RosterData = {
 
 export type Roster = typeof(setmetatable({} :: RosterData, Roster))
 
-function Roster.new(): Roster
-	return setmetatable({ board = Board.new(), bench = Board.new(BENCH_SIZE) }, Roster)
+function Roster.new(boardSize: number): Roster
+	return setmetatable({ board = Board.new(boardSize), bench = Board.new(BENCH_SIZE) }, Roster)
 end
 
 function Roster.GetZone(self: Roster, zone: Zone): Board

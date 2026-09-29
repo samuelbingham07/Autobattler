@@ -8,11 +8,8 @@ local Stars = require(ReplicatedStorage.Shared.Stars)
 
 type StarredUnit = Stars.StarredUnit
 
-local BOARD_SIZE = 3
-
 local Board = {}
 Board.__index = Board
-Board.SIZE = BOARD_SIZE
 
 type BoardData = {
 	size: number,
@@ -21,13 +18,17 @@ type BoardData = {
 
 export type Board = typeof(setmetatable({} :: BoardData, Board))
 
--- Defaults to the board size; pass a size for other rows like the bench.
-function Board.new(size: number?): Board
-	return setmetatable({ size = size or BOARD_SIZE, slots = {} }, Board)
+function Board.new(size: number): Board
+	return setmetatable({ size = size, slots = {} }, Board)
 end
 
 function Board.IsFull(self: Board): boolean
 	return #self.slots >= self.size
+end
+
+-- Grow the row (the board gains a slot on level-up). Never shrinks below its units.
+function Board.SetSize(self: Board, size: number)
+	self.size = math.max(size, #self.slots)
 end
 
 function Board.Get(self: Board, slot: number): StarredUnit?

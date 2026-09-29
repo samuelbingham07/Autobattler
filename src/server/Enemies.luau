@@ -1,5 +1,6 @@
 --!strict
 -- The fixed enemy board for each round, front to back.
+-- Enemies get trait bonuses too, using the same rules as you.
 -- Beat the last round to win the run.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,12 +12,12 @@ type StarredUnit = Stars.StarredUnit
 local ROUNDS: { { { any } } } = {
 	{ { "Squire", 1 } },
 	{ { "Squire", 1 }, { "Archer", 1 } },
-	{ { "Knight", 1 }, { "Archer", 1 } },
-	{ { "Knight", 1 }, { "Squire", 1 }, { "Archer", 1 } },
-	{ { "Knight", 1 }, { "Rogue", 1 }, { "Archer", 1 } },
-	{ { "Squire", 2 }, { "Rogue", 1 }, { "Archer", 2 } },
-	{ { "Knight", 2 }, { "Warlord", 1 }, { "Rogue", 1 } },
-	{ { "Knight", 2 }, { "Warlord", 2 }, { "Archer", 2 } }, -- boss
+	{ { "Knight", 1 }, { "Squire", 1 }, { "Archer", 1 } }, -- Guardian
+	{ { "Knight", 1 }, { "Rogue", 1 }, { "Archer", 1 } }, -- Ranger
+	{ { "Knight", 1 }, { "Squire", 1 }, { "Rogue", 1 }, { "Archer", 1 } }, -- Guardian + Ranger
+	{ { "Squire", 2 }, { "Knight", 1 }, { "Rogue", 1 }, { "Archer", 2 } },
+	{ { "Knight", 2 }, { "Warlord", 1 }, { "Rogue", 1 }, { "Archer", 2 } }, -- Noble + Ranger
+	{ { "Knight", 2 }, { "Squire", 2 }, { "Warlord", 2 }, { "Rogue", 1 }, { "Archer", 2 } }, -- boss
 }
 
 local Enemies = {}

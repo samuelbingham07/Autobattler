@@ -1,15 +1,15 @@
 --!strict
 -- Draws both boards on the baseplate: a pad per slot, a block per unit,
--- and a floating name + health bar over each unit.
+-- and a floating name, health bar and mana bar over each unit.
+-- Also replays fights from Combat.
 --
 -- Layout, seen from above (z axis):
---   enemy slot 3, 2, 1  |  center  |  your slot 1, 2, 3
+--   enemy slot ... 2, 1  |  center  |  your slot 1, 2 ...
 -- Slot 1 on each side is the frontline, closest to the middle.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local Stars = require(ReplicatedStorage.Shared.Stars)
-local Board = require(script.Parent.Board)
 local Combat = require(script.Parent.Combat)
 
 type Unit = Stars.StarredUnit
@@ -37,15 +37,23 @@ local LUNGE_DISTANCE = 1.5
 -- Out and back (reverses = true), quick enough to finish before the unit's next attack.
 local LUNGE_TWEEN = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, true)
 local FLASH_TWEEN = TweenInfo.new(0.25)
+local POP_TWEEN = TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local HEALTH_FULL = Color3.fromRGB(80, 200, 90)
 local HEALTH_EMPTY = Color3.fromRGB(220, 60, 60)
+local MANA_COLOR = Color3.fromRGB(80, 160, 255)
+local HIT_FLASH = Color3.new(1, 1, 1)
+local HEAL_FLASH = Color3.fromRGB(120, 255, 140)
+local CAST_TEXT = Color3.fromRGB(255, 220, 90)
 
 export type UnitView = {
 	part: Part,
 	fill: Frame,
 	hpLabel: TextLabel,
+	manaFill: Frame,
 	maxHealth: number,
+	maxMana: number,
+	size: number,
 	color: Color3,
 	home: Vector3, -- resting position, so attack lunges always return to the same spot
 	side: Side,
@@ -88,6 +96,22 @@ local function makeLabel(parent: Instance, text: string): TextLabel
 	return label
 end
 
+-- A bar with a background and a fill, at a vertical position inside a BillboardGui.
+local function makeBar(parent: Instance, y: number, height: number, fillColor: Color3): (Frame, Frame)
+	local bar = Instance.new("Frame")
+	bar.Position = UDim2.fromScale(0, y)
+	bar.Size = UDim2.fromScale(1, height)
+	bar.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	bar.BorderSizePixel = 0
+	bar.Parent = parent
+
+	local fill = Instance.new("Frame")
+	fill.BackgroundColor3 = fillColor
+	fill.BorderSizePixel = 0
+	fill.Parent = bar
+	return bar, fill
+end
+
 local Arena = {}
 
 function Arena.SetHealth(view: UnitView, health: number)
@@ -98,6 +122,10 @@ function Arena.SetHealth(view: UnitView, health: number)
 	if health <= 0 then
 		view.part.Transparency = 0.8
 	end
+end
+
+function Arena.SetMana(view: UnitView, mana: number)
+	view.manaFill.Size = UDim2.fromScale(math.clamp(mana / view.maxMana, 0, 1), 1)
 end
 
 local function makeUnit(parent: Instance, unit: Unit, side: Side, index: number): UnitView
@@ -114,46 +142,43 @@ local function makeUnit(parent: Instance, unit: Unit, side: Side, index: number)
 
 	-- Floating label. Size is in studs, so it shrinks with distance like the block does.
 	local gui = Instance.new("BillboardGui")
-	gui.Size = UDim2.new(5, 0, 1.6, 0)
-	gui.StudsOffset = Vector3.new(0, size / 2 + 1.5, 0)
+	gui.Size = UDim2.new(5, 0, 1.9, 0)
+	gui.StudsOffset = Vector3.new(0, size / 2 + 1.6, 0)
 	gui.AlwaysOnTop = true
 	gui.Parent = part
 
 	local nameArea = Instance.new("Frame")
 	nameArea.BackgroundTransparency = 1
-	nameArea.Size = UDim2.fromScale(1, 0.5)
+	nameArea.Size = UDim2.fromScale(1, 0.45)
 	nameArea.Parent = gui
 	makeLabel(nameArea, Stars.displayName(unit))
 
-	local bar = Instance.new("Frame")
-	bar.Position = UDim2.fromScale(0, 0.55)
-	bar.Size = UDim2.fromScale(1, 0.45)
-	bar.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-	bar.BorderSizePixel = 0
-	bar.Parent = gui
-
-	local fill = Instance.new("Frame")
-	fill.BorderSizePixel = 0
-	fill.Parent = bar
-
-	local hpLabel = makeLabel(bar, "")
+	local healthBar, fill = makeBar(gui, 0.5, 0.32, HEALTH_FULL)
+	local hpLabel = makeLabel(healthBar, "")
 	hpLabel.ZIndex = 2
+
+	local _, manaFill = makeBar(gui, 0.86, 0.14, MANA_COLOR)
 
 	local view: UnitView = {
 		part = part,
 		fill = fill,
 		hpLabel = hpLabel,
+		manaFill = manaFill,
 		maxHealth = unit.health,
+		maxMana = unit.ability.mana,
+		size = size,
 		color = part.Color,
 		home = part.Position,
 		side = side,
 	}
 	Arena.SetHealth(view, unit.health)
+	Arena.SetMana(view, 0)
 	return view
 end
 
 -- Draw both boards, replacing whatever was drawn before.
-function Arena.Render(playerUnits: { Unit }, enemyUnits: { Unit }): ArenaView
+-- playerSlots is your board size, so empty slots still get a pad.
+function Arena.Render(playerUnits: { Unit }, enemyUnits: { Unit }, playerSlots: number): ArenaView
 	local old = workspace:FindFirstChild(ARENA_NAME)
 	if old then
 		old:Destroy()
@@ -163,8 +188,10 @@ function Arena.Render(playerUnits: { Unit }, enemyUnits: { Unit }): ArenaView
 	folder.Name = ARENA_NAME
 	folder.Parent = workspace
 
-	for index = 1, Board.SIZE do
+	for index = 1, math.max(playerSlots, #playerUnits) do
 		makePad(folder, "player", index)
+	end
+	for index = 1, #enemyUnits do
 		makePad(folder, "enemy", index)
 	end
 
@@ -190,10 +217,29 @@ local function lunge(view: UnitView)
 	TweenService:Create(view.part, LUNGE_TWEEN, { Position = target }):Play()
 end
 
--- Target flashes white, then fades back to its team color.
-local function flash(view: UnitView)
-	view.part.Color = Color3.new(1, 1, 1)
+-- Unit flashes a color, then fades back to its team color.
+local function flash(view: UnitView, color: Color3)
+	view.part.Color = color
 	TweenService:Create(view.part, FLASH_TWEEN, { Color = view.color }):Play()
+end
+
+-- Text that floats up from a unit and fades out, e.g. an ability name.
+local function popText(view: UnitView, text: string, color: Color3)
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.new(6, 0, 1.2, 0)
+	gui.StudsOffset = Vector3.new(0, view.size / 2 + 3.8, 0)
+	gui.AlwaysOnTop = true
+	gui.Parent = view.part
+
+	local label = makeLabel(gui, text)
+	label.TextColor3 = color
+
+	TweenService:Create(gui, POP_TWEEN, { StudsOffset = gui.StudsOffset + Vector3.new(0, 2, 0) }):Play()
+	local fade = TweenService:Create(label, POP_TWEEN, { TextTransparency = 1, TextStrokeTransparency = 1 })
+	fade.Completed:Connect(function()
+		gui:Destroy()
+	end)
+	fade:Play()
 end
 
 -- Play back a fight from Combat.Fight on an arena drawn by Render.
@@ -205,14 +251,22 @@ function Arena.Replay(view: ArenaView, events: { Combat.CombatEvent }, speed: nu
 		task.wait((event.time - now) / playbackSpeed)
 		now = event.time
 
-		local attacker = sideViews(view, event.attackerSide)[event.attackerIndex]
-		local target = sideViews(view, event.targetSide)[event.targetIndex]
-		lunge(attacker)
-		flash(target)
-		Arena.SetHealth(target, event.targetHealth)
+		local actor = sideViews(view, event.side)[event.index]
+		if event.kind == "cast" then
+			popText(actor, `{event.abilityName}!`, CAST_TEXT)
+		else
+			lunge(actor)
+		end
+		Arena.SetMana(actor, event.mana)
 
-		if event.targetHealth <= 0 then
-			print(`{target.part.Name} ({event.targetSide}) dies at {string.format("%.1f", event.time)}s`)
+		for _, effect in event.effects do
+			local target = sideViews(view, effect.side)[effect.index]
+			flash(target, if effect.heal then HEAL_FLASH else HIT_FLASH)
+			Arena.SetHealth(target, effect.health)
+			Arena.SetMana(target, effect.mana)
+			if effect.health <= 0 then
+				print(`{target.part.Name} ({effect.side}) dies at {string.format("%.1f", event.time)}s`)
+			end
 		end
 	end
 end

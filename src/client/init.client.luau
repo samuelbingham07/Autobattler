@@ -6,6 +6,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Stars = require(Shared:WaitForChild("Stars"))
+local Traits = require(Shared:WaitForChild("Traits"))
+local Levels = require(Shared:WaitForChild("Levels"))
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local actionRemote = remotes:WaitForChild("Action")
 local stateRemote = remotes:WaitForChild("State")
@@ -18,9 +20,12 @@ local TIER_COLORS = {
 local BOARD_COLOR = Color3.fromRGB(70, 130, 230)
 local BENCH_COLOR = Color3.fromRGB(60, 85, 130)
 local ACTION_COLOR = Color3.fromRGB(90, 90, 105)
+local XP_COLOR = Color3.fromRGB(120, 80, 170)
 local SELL_COLOR = Color3.fromRGB(190, 150, 40)
 local FIGHT_COLOR = Color3.fromRGB(215, 115, 40)
 local EMPTY_COLOR = Color3.fromRGB(45, 45, 55)
+local ACTIVE_TRAIT_COLOR = Color3.fromRGB(140, 230, 150)
+local INACTIVE_TRAIT_COLOR = Color3.fromRGB(170, 170, 180)
 
 -- Client-only UI state
 local lastState = nil
@@ -36,7 +41,7 @@ gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
 local panel = Instance.new("Frame")
 panel.AnchorPoint = Vector2.new(0.5, 1)
 panel.Position = UDim2.new(0.5, 0, 1, -12)
-panel.Size = UDim2.fromOffset(800, 0)
+panel.Size = UDim2.fromOffset(880, 0)
 panel.AutomaticSize = Enum.AutomaticSize.Y
 panel.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
 panel.BackgroundTransparency = 0.15
@@ -88,13 +93,76 @@ local messageLabel = makeLabel(2, 18, 14)
 messageLabel.TextColor3 = Color3.fromRGB(255, 220, 120)
 local enemyLabel = makeLabel(3, 16, 13)
 enemyLabel.TextColor3 = Color3.fromRGB(255, 140, 140)
-makeLabel(4, 16, 13).Text = "BOARD (front to back, fights)"
-local boardRow = makeRow(5, 48)
-makeLabel(6, 16, 13).Text = "BENCH (storage, doesn't fight)"
-local benchRow = makeRow(7, 44)
-local actionRow = makeRow(8, 32)
-makeLabel(9, 16, 13).Text = "SHOP (click to buy)"
-local shopRow = makeRow(10, 72)
+local traitsLabel = makeLabel(4, 16, 13)
+traitsLabel.TextWrapped = true
+traitsLabel.AutomaticSize = Enum.AutomaticSize.Y -- grow to a second line if needed
+makeLabel(5, 16, 13).Text = "BOARD (front to back, fights)"
+local boardRow = makeRow(6, 48)
+makeLabel(7, 16, 13).Text = "BENCH (storage, doesn't fight)"
+local benchRow = makeRow(8, 44)
+local actionRow = makeRow(9, 32)
+local detailLabel = makeLabel(10, 16, 13)
+detailLabel.TextColor3 = Color3.fromRGB(200, 210, 255)
+detailLabel.TextWrapped = true
+detailLabel.AutomaticSize = Enum.AutomaticSize.Y
+local oddsLabel = makeLabel(11, 16, 13)
+local shopRow = makeRow(12, 76)
+
+-- Text helpers -------------------------------------------------------------
+
+local function statLine(unit): string
+	local dps = unit.damage * unit.attackSpeed
+	return `{unit.health} HP · {string.format("%.0f", dps)} DPS`
+end
+
+local function abilityText(ability): string
+	local power = ability.power
+	if ability.kind == "healSelf" then
+		return `heals itself for {power}`
+	elseif ability.kind == "healAllies" then
+		return `heals the whole team for {power}`
+	elseif ability.kind == "damageAll" then
+		return `hits every enemy for {power}`
+	elseif ability.kind == "damageBack" then
+		return `hits the back-most enemy for {power}`
+	elseif ability.kind == "damageFront" then
+		return `hits the front {ability.count or 1} enemies for {power}`
+	end
+	return ""
+end
+
+local function makeUnits(list)
+	local units = {}
+	for _, entry in list do
+		table.insert(units, Stars.make(entry.name, entry.stars))
+	end
+	return units
+end
+
+local function unitNames(list): string
+	local names = {}
+	for _, unit in makeUnits(list) do
+		table.insert(names, Stars.displayName(unit))
+	end
+	return table.concat(names, ", ")
+end
+
+local function traitsText(list): (string, boolean)
+	local parts = {}
+	local anyActive = false
+	for _, info in Traits.summary(makeUnits(list)) do
+		if info.active then
+			anyActive = true
+			table.insert(parts, `{info.name} {info.count}/{info.required} ✓ ({info.description})`)
+		else
+			table.insert(parts, `{info.name} {info.count}/{info.required}`)
+		end
+	end
+	if #parts == 0 then
+		return "Traits: none yet. Field 2 different units that share a trait.", false
+	end
+	return `Traits: {table.concat(parts, "   ·   ")}`, anyActive
+end
 
 -- Buttons ------------------------------------------------------------------
 
@@ -133,19 +201,6 @@ local function clearButtons(row: Frame)
 	end
 end
 
-local function statLine(unit): string
-	local dps = unit.damage * unit.attackSpeed
-	return `{unit.health} HP · {string.format("%.0f", dps)} DPS`
-end
-
-local function unitNames(list): string
-	local names = {}
-	for _, entry in list do
-		table.insert(names, Stars.displayName(Stars.make(entry.name, entry.stars)))
-	end
-	return table.concat(names, ", ")
-end
-
 local render -- defined below; unit buttons call it to show a new selection
 
 -- One row of owned units (board or bench). Clicking a unit selects it.
@@ -175,6 +230,7 @@ end
 
 local function renderActions(state, planning: boolean)
 	clearButtons(actionRow)
+	detailLabel.Text = ""
 
 	if state.phase == "gameover" or state.phase == "won" then
 		makeButton(actionRow, 200, "NEW RUN", FIGHT_COLOR, true, function()
@@ -191,6 +247,9 @@ local function renderActions(state, planning: boolean)
 	end
 
 	local unit = Stars.make(entry.name, entry.stars)
+	local ability = unit.ability
+	detailLabel.Text = `{Stars.displayName(unit)}  [{table.concat(unit.traits, ", ")}]   {ability.name} ({ability.mana} mana): {abilityText(ability)}`
+
 	local zone, index = selected.zone, selected.index
 	local moveText = if zone == "board" then "Move to bench" else "Move to board"
 	makeButton(actionRow, 150, moveText, ACTION_COLOR, true, function()
@@ -206,29 +265,47 @@ local function renderActions(state, planning: boolean)
 end
 
 local function renderShop(state, planning: boolean)
+	local odds = Levels.shopOdds(state.level)
+	local function percent(chance: number): string
+		return `{math.round(chance * 100)}%` -- round away float noise like 55.00000000000001
+	end
+	oddsLabel.Text = `SHOP (click to buy)   ·   odds at level {state.level}: 1g {percent(odds[1])}  ·  2g {percent(odds[2])}  ·  3g {percent(odds[3])}`
+
 	clearButtons(shopRow)
 	for slot, name in state.offers do
 		if name then
 			local unit = Stars.make(name, 1)
-			makeButton(
+			local button = makeButton(
 				shopRow,
-				104,
-				`{name} ({unit.cost}g)\n{statLine(unit)}`,
+				100,
+				`{name} ({unit.cost}g)\n{statLine(unit)}\n{table.concat(unit.traits, "/")}\n{unit.ability.name}`,
 				TIER_COLORS[unit.cost],
 				planning and state.gold >= unit.cost,
 				function()
 					actionRemote:FireServer("buy", slot)
 				end
 			)
+			button.TextSize = 12
 		else
-			makeButton(shopRow, 104, "Sold", EMPTY_COLOR, false, function() end)
+			makeButton(shopRow, 100, "Sold", EMPTY_COLOR, false, function() end)
 		end
 	end
 
-	makeButton(shopRow, 88, `Reroll\n{state.rerollCost}g`, ACTION_COLOR, planning and state.gold >= state.rerollCost, function()
+	makeButton(shopRow, 84, `Reroll\n{state.rerollCost}g`, ACTION_COLOR, planning and state.gold >= state.rerollCost, function()
 		actionRemote:FireServer("reroll")
 	end)
-	makeButton(shopRow, 100, "FIGHT", FIGHT_COLOR, planning and #state.board > 0, function()
+	local canLevel = state.xpToNext ~= false
+	makeButton(
+		shopRow,
+		84,
+		if canLevel then `Buy {Levels.XP_PER_BUY} XP\n{Levels.XP_BUY_COST}g` else "Max\nlevel",
+		XP_COLOR,
+		planning and canLevel and state.gold >= Levels.XP_BUY_COST,
+		function()
+			actionRemote:FireServer("buyxp")
+		end
+	)
+	makeButton(shopRow, 96, "FIGHT", FIGHT_COLOR, planning and #state.board > 0, function()
 		actionRemote:FireServer("fight")
 	end)
 end
@@ -242,12 +319,17 @@ function render(state)
 		gameover = "Game over",
 		won = "Victory!",
 	})[state.phase]
+	local levelText = if state.xpToNext then `Level {state.level} ({state.xp}/{state.xpToNext} XP)` else `Level {state.level} (max)`
 
-	statusLabel.Text = `Round {state.round}/{state.totalRounds}   ·   Health {state.health}   ·   {state.gold} gold   ·   {phaseText}`
+	statusLabel.Text = `Round {state.round}/{state.totalRounds}   ·   Health {state.health}   ·   {state.gold} gold   ·   {levelText}   ·   {phaseText}`
 	messageLabel.Text = state.message
 	enemyLabel.Text = `Enemy this round: {unitNames(state.enemy)}`
 
-	renderUnits(boardRow, "board", state.board, state.boardSize, 180, BOARD_COLOR, planning)
+	local text, anyActive = traitsText(state.board)
+	traitsLabel.Text = text
+	traitsLabel.TextColor3 = if anyActive then ACTIVE_TRAIT_COLOR else INACTIVE_TRAIT_COLOR
+
+	renderUnits(boardRow, "board", state.board, state.boardSize, 160, BOARD_COLOR, planning)
 	renderUnits(benchRow, "bench", state.bench, state.benchSize, 140, BENCH_COLOR, planning)
 	renderActions(state, planning)
 	renderShop(state, planning)

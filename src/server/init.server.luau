@@ -1,4 +1,4 @@
--- Game loop: plan (buy/sell/move/reroll) -> fight this round's enemy -> repeat.
+-- Game loop: plan (buy/sell/move/reroll/level up) -> fight this round's enemy -> repeat.
 -- Lose rounds and you lose health; hit 0 and the run is over. Beat the last
 -- round to win.
 --
@@ -10,12 +10,13 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shop = require(script.Shop)
-local Board = require(script.Board)
 local Roster = require(script.Roster)
 local Enemies = require(script.Enemies)
 local Combat = require(script.Combat)
 local Arena = require(script.Arena)
 local Stars = require(ReplicatedStorage.Shared.Stars)
+local Traits = require(ReplicatedStorage.Shared.Traits)
+local Levels = require(ReplicatedStorage.Shared.Levels)
 
 local STARTING_HEALTH = 20
 local ROUND_INCOME = 5
@@ -40,6 +41,8 @@ local shop
 local roster
 local round
 local health
+local level
+local xp
 local phase -- "planning", "fighting", "gameover" or "won"
 local message
 
@@ -52,8 +55,9 @@ local function describe(units)
 end
 
 -- Everything a client needs to draw the UI. Units are sent as name + stars;
--- the client rebuilds stats with the shared Stars module. Sold shop slots are
--- `false`, because nil holes don't survive being sent through a remote.
+-- the client rebuilds stats, traits and abilities with the shared modules.
+-- Sold shop slots and "no next level" are `false`, because nil doesn't
+-- survive being sent through a remote inside a table.
 local function snapshot()
 	local offers = {}
 	for slot = 1, Shop.SIZE do
@@ -66,11 +70,14 @@ local function snapshot()
 		totalRounds = Enemies.COUNT,
 		health = health,
 		gold = shop.gold,
+		level = level,
+		xp = xp,
+		xpToNext = Levels.xpToNext(level) or false,
 		phase = phase,
 		message = message,
 		offers = offers,
 		board = describe(roster.board:GetUnits()),
-		boardSize = Board.SIZE,
+		boardSize = roster.board.size,
 		bench = describe(roster.bench:GetUnits()),
 		benchSize = Roster.BENCH_SIZE,
 		enemy = describe(Enemies.forRound(round)),
@@ -83,12 +90,39 @@ local function broadcast()
 end
 
 local function redraw()
-	Arena.Render(roster.board:GetUnits(), Enemies.forRound(round))
+	Arena.Render(
+		Traits.apply(roster.board:GetUnits()),
+		Traits.apply(Enemies.forRound(round)),
+		roster.board.size
+	)
+end
+
+-- Add XP and level up as many times as it covers. Returns true if the level went up.
+local function gainXp(amount: number): boolean
+	local leveled = false
+	xp += amount
+	local needed = Levels.xpToNext(level)
+	while needed and xp >= needed do
+		xp -= needed
+		level += 1
+		leveled = true
+		needed = Levels.xpToNext(level)
+	end
+	if not needed then
+		xp = 0 -- max level
+	end
+	if leveled then
+		roster.board:SetSize(Levels.boardSize(level))
+		shop.level = level
+	end
+	return leveled
 end
 
 local function newRun()
 	shop = Shop.new()
-	roster = Roster.new()
+	level = 1
+	xp = 0
+	roster = Roster.new(Levels.boardSize(level))
 	round = 1
 	health = STARTING_HEALTH
 	phase = "planning"
@@ -106,12 +140,11 @@ local function isZone(value: any): boolean
 end
 
 local function zoneSize(zone: string): number
-	return if zone == "board" then Board.SIZE else Roster.BENCH_SIZE
+	return roster:GetZone(zone).size
 end
 
 local function fight()
-	local playerUnits = roster.board:GetUnits()
-	if #playerUnits == 0 then
+	if #roster.board:GetUnits() == 0 then
 		message = "Put at least one unit on your board first"
 		return
 	end
@@ -120,8 +153,10 @@ local function fight()
 	message = `Round {round}: fight!`
 	broadcast()
 
-	local enemyUnits = Enemies.forRound(round)
-	local arenaView = Arena.Render(playerUnits, enemyUnits)
+	-- Trait bonuses are applied once here, so the arena and the fight use the same numbers.
+	local playerUnits = Traits.apply(roster.board:GetUnits())
+	local enemyUnits = Traits.apply(Enemies.forRound(round))
+	local arenaView = Arena.Render(playerUnits, enemyUnits, roster.board.size)
 	local result, events, enemySurvivors = Combat.Fight(playerUnits, enemyUnits, false)
 	task.wait(1)
 	Arena.Replay(arenaView, events)
@@ -149,6 +184,9 @@ local function fight()
 
 	round += 1
 	shop.gold += ROUND_INCOME
+	if gainXp(Levels.XP_PER_ROUND) then
+		message = `Level {level}! You can field {roster.board.size} units now.`
+	end
 	shop:Roll() -- free new shop each round, like TFT
 	phase = "planning"
 	redraw()
@@ -171,6 +209,22 @@ local function buy(slot: number)
 		message ..= `  ->  {Stars.displayName(upgraded)}!`
 	end
 	redraw()
+end
+
+local function buyXp()
+	if not Levels.xpToNext(level) then
+		message = "Already at max level"
+	elseif shop.gold < Levels.XP_BUY_COST then
+		message = "Not enough gold to buy XP"
+	else
+		shop.gold -= Levels.XP_BUY_COST
+		if gainXp(Levels.XP_PER_BUY) then
+			message = `Level {level}! You can field {roster.board.size} units now.`
+			redraw() -- new empty pad
+		else
+			message = `+{Levels.XP_PER_BUY} XP`
+		end
+	end
 end
 
 actionRemote.OnServerEvent:Connect(function(player, action, arg1, arg2)
@@ -206,6 +260,8 @@ actionRemote.OnServerEvent:Connect(function(player, action, arg1, arg2)
 		redraw()
 	elseif action == "reroll" then
 		message = if shop:Reroll() then "Rerolled" else "Not enough gold to reroll"
+	elseif action == "buyxp" then
+		buyXp()
 	elseif action == "fight" then
 		fight()
 	else

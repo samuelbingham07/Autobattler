@@ -13,6 +13,8 @@ export type StarredUnit = {
 	health: number,
 	damage: number,
 	attackSpeed: number,
+	traits: { string },
+	ability: Units.Ability,
 	stars: number,
 }
 
@@ -21,7 +23,8 @@ local Stars = {}
 Stars.MAX = 3
 Stars.COPIES_TO_UPGRADE = 3
 
--- Each star multiplies health and damage by this. Attack speed stays the same.
+-- Each star multiplies health, damage and ability power by this.
+-- Attack speed and mana cost stay the same.
 local STAT_MULTIPLIER = 1.8
 
 local unitsByName: { [string]: Unit } = {}
@@ -33,12 +36,18 @@ function Stars.make(name: string, stars: number): StarredUnit
 	local base = unitsByName[name]
 	assert(base, `No unit named {name}`)
 	local scale = STAT_MULTIPLIER ^ (stars - 1)
+
+	local ability = table.clone(base.ability)
+	ability.power = math.round(ability.power * scale)
+
 	return {
 		name = base.name,
 		cost = base.cost,
 		health = math.round(base.health * scale),
 		damage = math.round(base.damage * scale),
 		attackSpeed = base.attackSpeed,
+		traits = base.traits,
+		ability = ability,
 		stars = stars,
 	}
 end
