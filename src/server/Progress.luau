@@ -10,7 +10,10 @@
 
 local DataStoreService = game:GetService("DataStoreService")
 
-local STORE_NAME = "AutobattlerBest_v1"
+local Leaderboard = require(script.Parent.Leaderboard)
+
+-- v2: the run went from 8 to 12 rounds, so old scores mean something different.
+local STORE_NAME = "AutobattlerBest_v2"
 
 local store: DataStore? = nil
 do
@@ -70,6 +73,7 @@ function Progress.record(player: Player, result: number, onSaved: ((boolean) -> 
 	bestByUserId[player.UserId] = result
 
 	if not store then
+		task.spawn(Leaderboard.submit, player, result) -- still shows on this server's board
 		if onSaved then
 			onSaved(false)
 		end
@@ -81,6 +85,7 @@ function Progress.record(player: Player, result: number, onSaved: ((boolean) -> 
 	-- UpdateAsync reads the saved value first, so a stale local copy can never
 	-- overwrite a better result. Returning nil cancels the write.
 	task.spawn(function()
+		Leaderboard.submit(player, result)
 		local ok, err = pcall(function()
 			dataStore:UpdateAsync(key(player), function(saved)
 				if typeof(saved) == "number" and saved >= result then

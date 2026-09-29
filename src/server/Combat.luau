@@ -76,7 +76,7 @@ local function makeFighters(units: { Unit }, side: Side): { Fighter }
 			damage = unit.damage,
 			interval = interval,
 			nextAction = interval,
-			mana = 0,
+			mana = unit.startingMana,
 			ability = unit.ability,
 		})
 	end

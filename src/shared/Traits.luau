@@ -1,31 +1,47 @@
 --!strict
 -- Traits: field enough *different* units that share a trait and they get a bonus.
+-- Each trait has tiers; reaching a higher count replaces the lower tier's bonus.
 -- Shared so the client can show which traits are active.
 
 local Stars = require(script.Parent.Stars)
 
 type StarredUnit = Stars.StarredUnit
 
-export type TraitInfo = {
-	name: string,
-	count: number, -- different units on the team with this trait
-	required: number,
-	active: boolean,
+type Tier = {
+	count: number, -- different units needed
+	value: number, -- size of the bonus; what it means depends on the trait
 	description: string,
 }
 
-local GUARDIAN_HEALTH = 250
-local RANGER_ATTACK_SPEED = 1.35
-local NOBLE_DAMAGE = 1.15
+export type TraitInfo = {
+	name: string,
+	count: number, -- different units on the team with this trait
+	tiers: { Tier },
+	activeTier: number, -- 0 if not active
+	nextCount: number?, -- units needed for the next tier, nil at the top
+}
 
-local TRAITS: { [string]: { required: number, description: string } } = {
-	Guardian = { required = 2, description = `Guardians gain +{GUARDIAN_HEALTH} health` },
-	Ranger = { required = 2, description = "Rangers attack 35% faster" },
-	Noble = { required = 2, description = "Whole team deals +15% attack damage" },
+local TRAITS: { [string]: { Tier } } = {
+	Guardian = {
+		{ count = 2, value = 250, description = "Guardians +250 health" },
+		{ count = 4, value = 600, description = "Guardians +600 health" },
+	},
+	Mystic = {
+		{ count = 2, value = 20, description = "Mystics start with 20 mana" },
+		{ count = 4, value = 45, description = "Mystics start with 45 mana" },
+	},
+	Noble = {
+		{ count = 2, value = 1.15, description = "Whole team +15% attack damage" },
+		{ count = 4, value = 1.35, description = "Whole team +35% attack damage" },
+	},
+	Ranger = {
+		{ count = 2, value = 1.35, description = "Rangers attack 35% faster" },
+		{ count = 3, value = 1.7, description = "Rangers attack 70% faster" },
+	},
 }
 
 -- Alphabetical, so the UI lists traits in a stable order.
-local TRAIT_ORDER = { "Guardian", "Noble", "Ranger" }
+local TRAIT_ORDER = { "Guardian", "Mystic", "Noble", "Ranger" }
 
 local Traits = {}
 
@@ -44,6 +60,17 @@ local function countTraits(units: { StarredUnit }): { [string]: number }
 	return counts
 end
 
+-- The highest tier reached (0 = none) and that tier's data.
+local function activeTier(name: string, count: number): (number, Tier?)
+	local reached, tierData = 0, nil
+	for index, tier in TRAITS[name] do
+		if count >= tier.count then
+			reached, tierData = index, tier
+		end
+	end
+	return reached, tierData
+end
+
 -- Every trait present on the team, for display.
 function Traits.summary(units: { StarredUnit }): { TraitInfo }
 	local counts = countTraits(units)
@@ -51,42 +78,49 @@ function Traits.summary(units: { StarredUnit }): { TraitInfo }
 	for _, name in TRAIT_ORDER do
 		local count = counts[name]
 		if count then
-			local def = TRAITS[name]
+			local tiers = TRAITS[name]
+			local reached = activeTier(name, count)
+			local nextTier = tiers[reached + 1]
 			table.insert(list, {
 				name = name,
 				count = count,
-				required = def.required,
-				active = count >= def.required,
-				description = def.description,
+				tiers = tiers,
+				activeTier = reached,
+				nextCount = if nextTier then nextTier.count else nil,
 			})
 		end
 	end
 	return list
 end
 
-local function hasTrait(unit: StarredUnit, trait: string): boolean
-	return table.find(unit.traits, trait) ~= nil
-end
-
 -- Copies of the units with active trait bonuses applied. Use these for
 -- both drawing and fighting so health bars match the real numbers.
 function Traits.apply(units: { StarredUnit }): { StarredUnit }
 	local counts = countTraits(units)
-	local function active(name: string): boolean
-		return (counts[name] or 0) >= TRAITS[name].required
+	local bonus: { [string]: number? } = {}
+	for name in TRAITS do
+		local _, tier = activeTier(name, counts[name] or 0)
+		bonus[name] = if tier then tier.value else nil
 	end
 
 	local buffed = {}
 	for _, unit in units do
 		local copy = table.clone(unit)
-		if active("Guardian") and hasTrait(unit, "Guardian") then
-			copy.health += GUARDIAN_HEALTH
+		local has = function(trait: string): boolean
+			return table.find(unit.traits, trait) ~= nil
 		end
-		if active("Ranger") and hasTrait(unit, "Ranger") then
-			copy.attackSpeed *= RANGER_ATTACK_SPEED
+		local guardian, mystic, noble, ranger = bonus.Guardian, bonus.Mystic, bonus.Noble, bonus.Ranger
+		if guardian and has("Guardian") then
+			copy.health += guardian
 		end
-		if active("Noble") then
-			copy.damage = math.round(copy.damage * NOBLE_DAMAGE)
+		if mystic and has("Mystic") then
+			copy.startingMana = math.min(copy.ability.mana, mystic)
+		end
+		if noble then
+			copy.damage = math.round(copy.damage * noble)
+		end
+		if ranger and has("Ranger") then
+			copy.attackSpeed *= ranger
 		end
 		table.insert(buffed, copy)
 	end

@@ -35,7 +35,7 @@ local Units: { Unit } = {
 		cost = 1,
 		health = 650,
 		damage = 45,
-		attackSpeed = 0.6, -- tank, 27 DPS
+		attackSpeed = 0.6,
 		traits = { "Guardian" },
 		ability = { name = "Shield Up", mana = 50, kind = "healSelf", power = 150 },
 	},
@@ -44,9 +44,18 @@ local Units: { Unit } = {
 		cost = 1,
 		health = 450,
 		damage = 50,
-		attackSpeed = 0.75, -- carry, 37.5 DPS
+		attackSpeed = 0.75,
 		traits = { "Ranger" },
 		ability = { name = "Volley", mana = 60, kind = "damageAll", power = 70 },
+	},
+	{
+		name = "Acolyte",
+		cost = 1,
+		health = 500,
+		damage = 35,
+		attackSpeed = 0.7,
+		traits = { "Mystic" },
+		ability = { name = "Blessing", mana = 60, kind = "healAllies", power = 70 },
 	},
 
 	-- 2-cost
@@ -55,7 +64,7 @@ local Units: { Unit } = {
 		cost = 2,
 		health = 850,
 		damage = 60,
-		attackSpeed = 0.65, -- tank, 39 DPS
+		attackSpeed = 0.65,
 		traits = { "Guardian", "Noble" },
 		ability = { name = "Rally", mana = 80, kind = "healAllies", power = 100 },
 	},
@@ -64,9 +73,18 @@ local Units: { Unit } = {
 		cost = 2,
 		health = 600,
 		damage = 70,
-		attackSpeed = 0.85, -- carry, 59.5 DPS
+		attackSpeed = 0.85,
 		traits = { "Ranger" },
 		ability = { name = "Backstab", mana = 50, kind = "damageBack", power = 180 },
+	},
+	{
+		name = "Mage",
+		cost = 2,
+		health = 550,
+		damage = 45,
+		attackSpeed = 0.7,
+		traits = { "Mystic" },
+		ability = { name = "Firestorm", mana = 60, kind = "damageAll", power = 110 },
 	},
 
 	-- 3-cost
@@ -75,9 +93,49 @@ local Units: { Unit } = {
 		cost = 3,
 		health = 1000,
 		damage = 80,
-		attackSpeed = 0.8, -- 64 DPS
+		attackSpeed = 0.8,
 		traits = { "Noble" },
 		ability = { name = "Cleave", mana = 70, kind = "damageFront", power = 160, count = 2 },
+	},
+	{
+		name = "Sentinel",
+		cost = 3,
+		health = 1150,
+		damage = 60,
+		attackSpeed = 0.65,
+		traits = { "Guardian", "Mystic" },
+		ability = { name = "Stone Skin", mana = 60, kind = "healSelf", power = 350 },
+	},
+
+	-- 4-cost
+	{
+		name = "Paladin",
+		cost = 4,
+		health = 1300,
+		damage = 85,
+		attackSpeed = 0.75,
+		traits = { "Guardian", "Noble" },
+		ability = { name = "Divine Light", mana = 80, kind = "healAllies", power = 220 },
+	},
+	{
+		name = "Sniper",
+		cost = 4,
+		health = 800,
+		damage = 120,
+		attackSpeed = 0.8,
+		traits = { "Ranger", "Mystic" },
+		ability = { name = "Headshot", mana = 60, kind = "damageBack", power = 450 },
+	},
+
+	-- 5-cost
+	{
+		name = "Dragon",
+		cost = 5,
+		health = 1800,
+		damage = 110,
+		attackSpeed = 0.8,
+		traits = { "Mystic", "Noble" },
+		ability = { name = "Inferno", mana = 90, kind = "damageAll", power = 300 },
 	},
 }
 

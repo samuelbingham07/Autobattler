@@ -98,10 +98,11 @@ function Roster.WouldUpgrade(self: Roster, name: string): boolean
 	return #locate(self, name, 1) >= Stars.COPIES_TO_UPGRADE - 1
 end
 
--- Add a newly bought unit: to the board if there's room, else the bench.
+-- Add a newly bought unit: to `preferred` if given and it has room, otherwise
+-- the board if there's room, else the bench.
 -- Caller must check HasSpace() or WouldUpgrade() first.
 -- Returns any units that were created by star-ups.
-function Roster.Add(self: Roster, unit: StarredUnit): { StarredUnit }
+function Roster.Add(self: Roster, unit: StarredUnit, preferred: Zone?): { StarredUnit }
 	local upgrades = {}
 	local copies = locate(self, unit.name, unit.stars)
 	if unit.stars < Stars.MAX and #copies >= Stars.COPIES_TO_UPGRADE - 1 then
@@ -110,6 +111,9 @@ function Roster.Add(self: Roster, unit: StarredUnit): { StarredUnit }
 		table.insert(upgrades, merge(set, unit.name, unit.stars))
 	else
 		local zone = if self.board:IsFull() then self.bench else self.board
+		if preferred and not self:GetZone(preferred):IsFull() then
+			zone = self:GetZone(preferred)
+		end
 		zone:Add(unit)
 	end
 	mergeAll(self, upgrades)

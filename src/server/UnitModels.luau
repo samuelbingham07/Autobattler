@@ -21,6 +21,11 @@ local STEEL = Color3.fromRGB(170, 175, 185)
 local GOLD = Color3.fromRGB(230, 185, 60)
 local DARK = Color3.fromRGB(35, 35, 40)
 local HOOD_GREEN = Color3.fromRGB(50, 95, 55)
+local ROBE_WHITE = Color3.fromRGB(235, 230, 215)
+local ARCANE = Color3.fromRGB(150, 90, 230)
+local STONE = Color3.fromRGB(110, 115, 120)
+local HOLY = Color3.fromRGB(255, 225, 120)
+local BONE = Color3.fromRGB(225, 215, 190)
 
 -- Gear per unit name. Units not listed here just get a body and head.
 local GEAR: { [string]: { GearPiece } } = {
@@ -43,6 +48,38 @@ local GEAR: { [string]: { GearPiece } } = {
 	Warlord = {
 		{ name = "Sword", size = Vector3.new(0.25, 3.2, 0.5), offset = Vector3.new(1.25, 0.8, -0.3), color = STEEL, material = Enum.Material.Metal },
 		{ name = "Crown", size = Vector3.new(1.3, 0.35, 1.3), offset = Vector3.new(0, 2.55, 0), color = GOLD, material = Enum.Material.Metal },
+	},
+	Acolyte = {
+		{ name = "Staff", size = Vector3.new(0.2, 3, 0.2), offset = Vector3.new(1.2, 0.5, -0.3), color = WOOD, material = Enum.Material.Wood },
+		{ name = "Hood", size = Vector3.new(1.3, 0.4, 1.3), offset = Vector3.new(0, 2.5, 0), color = ROBE_WHITE, material = Enum.Material.Fabric },
+	},
+	Mage = {
+		{ name = "HatBrim", size = Vector3.new(1.6, 0.15, 1.6), offset = Vector3.new(0, 2.45, 0), color = ARCANE, material = Enum.Material.Fabric },
+		{ name = "HatTop", size = Vector3.new(0.8, 0.9, 0.8), offset = Vector3.new(0, 2.95, 0), color = ARCANE, material = Enum.Material.Fabric },
+		{ name = "Staff", size = Vector3.new(0.2, 3, 0.2), offset = Vector3.new(1.2, 0.5, -0.3), color = WOOD, material = Enum.Material.Wood },
+		{ name = "Orb", size = Vector3.new(0.5, 0.5, 0.5), offset = Vector3.new(1.2, 2.2, -0.3), color = ARCANE, material = Enum.Material.Neon },
+	},
+	Sentinel = {
+		{ name = "ShoulderLeft", size = Vector3.new(0.8, 0.8, 1.4), offset = Vector3.new(-1.3, 0.9, 0), color = STONE, material = Enum.Material.Slate },
+		{ name = "ShoulderRight", size = Vector3.new(0.8, 0.8, 1.4), offset = Vector3.new(1.3, 0.9, 0), color = STONE, material = Enum.Material.Slate },
+		{ name = "Rune", size = Vector3.new(0.6, 0.6, 0.05), offset = Vector3.new(0, 0.2, -0.62), color = ARCANE, material = Enum.Material.Neon },
+	},
+	Paladin = {
+		{ name = "Shield", size = Vector3.new(0.2, 2, 1.5), offset = Vector3.new(-1.15, 0, -0.2), color = GOLD, material = Enum.Material.Metal },
+		{ name = "Hammer", size = Vector3.new(0.25, 2.6, 0.25), offset = Vector3.new(1.2, 0.4, -0.3), color = STEEL, material = Enum.Material.Metal },
+		{ name = "Halo", size = Vector3.new(1.5, 0.1, 1.5), offset = Vector3.new(0, 2.9, 0), color = HOLY, material = Enum.Material.Neon },
+	},
+	Sniper = {
+		{ name = "Rifle", size = Vector3.new(0.2, 0.25, 2.6), offset = Vector3.new(1.15, 0.3, -0.8), color = DARK, material = Enum.Material.Metal },
+		{ name = "Scope", size = Vector3.new(0.15, 0.15, 0.6), offset = Vector3.new(1.15, 0.55, -0.6), color = STEEL, material = Enum.Material.Metal },
+		{ name = "Cap", size = Vector3.new(1.3, 0.3, 1.5), offset = Vector3.new(0, 2.5, -0.1), color = HOOD_GREEN, material = Enum.Material.Fabric },
+	},
+	Dragon = {
+		{ name = "WingLeft", size = Vector3.new(0.2, 2, 2.4), offset = Vector3.new(-1.2, 0.8, 0.8), color = DARK, material = Enum.Material.SmoothPlastic },
+		{ name = "WingRight", size = Vector3.new(0.2, 2, 2.4), offset = Vector3.new(1.2, 0.8, 0.8), color = DARK, material = Enum.Material.SmoothPlastic },
+		{ name = "HornLeft", size = Vector3.new(0.2, 0.6, 0.2), offset = Vector3.new(-0.4, 2.7, 0), color = BONE, material = Enum.Material.SmoothPlastic },
+		{ name = "HornRight", size = Vector3.new(0.2, 0.6, 0.2), offset = Vector3.new(0.4, 2.7, 0), color = BONE, material = Enum.Material.SmoothPlastic },
+		{ name = "Tail", size = Vector3.new(0.4, 0.4, 1.8), offset = Vector3.new(0, -0.8, 1.4), color = DARK, material = Enum.Material.SmoothPlastic },
 	},
 }
 

@@ -16,6 +16,7 @@ export type StarredUnit = {
 	traits: { string },
 	ability: Units.Ability,
 	stars: number,
+	startingMana: number, -- mana at the start of a fight (Mystic trait raises it)
 }
 
 local Stars = {}
@@ -49,6 +50,7 @@ function Stars.make(name: string, stars: number): StarredUnit
 		traits = base.traits,
 		ability = ability,
 		stars = stars,
+		startingMana = 0,
 	}
 end
 

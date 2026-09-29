@@ -3,8 +3,9 @@
 -- and a floating name, health bar and mana bar over each unit.
 -- Also replays fights from Combat, with damage numbers and sounds.
 --
--- Layout, seen from above (z axis):
---   enemy slot ... 2, 1  |  center  |  your slot 1, 2 ...
+-- Each player gets their own arena: a folder in Workspace and an origin point
+-- on the baseplate (see Session). Layout around the origin, seen from above (z axis):
+--   enemy slot ... 2, 1  |  origin  |  your slot 1, 2 ...
 -- Slot 1 on each side is the frontline, closest to the middle.
 -- Characters face the middle.
 
@@ -18,7 +19,6 @@ local UnitModels = require(script.Parent.UnitModels)
 type Unit = Stars.StarredUnit
 type Side = "player" | "enemy"
 
-local ARENA_NAME = "Arena"
 local FRONT_OFFSET = 6 -- studs from the center line to each side's slot 1
 local SLOT_SPACING = 6 -- studs between slots
 local PAD_SIZE = 5
@@ -31,8 +31,10 @@ local TEAM_COLORS: { [Side]: Color3 } = {
 -- Pricier units are bigger, and each extra star adds a bit more.
 local SCALE_BY_COST: { [number]: number } = {
 	[1] = 1,
-	[2] = 1.15,
-	[3] = 1.3,
+	[2] = 1.1,
+	[3] = 1.2,
+	[4] = 1.3,
+	[5] = 1.45,
 }
 local SCALE_PER_STAR = 0.15
 
@@ -81,17 +83,17 @@ export type ArenaView = {
 	enemy: { UnitView },
 }
 
-local function slotPosition(side: Side, index: number): Vector3
+local function slotPosition(origin: Vector3, side: Side, index: number): Vector3
 	local direction = if side == "player" then 1 else -1
-	return Vector3.new(0, 0, direction * (FRONT_OFFSET + (index - 1) * SLOT_SPACING))
+	return origin + Vector3.new(0, 0, direction * (FRONT_OFFSET + (index - 1) * SLOT_SPACING))
 end
 
-local function makePad(parent: Instance, side: Side, index: number)
+local function makePad(parent: Instance, origin: Vector3, side: Side, index: number)
 	local pad = Instance.new("Part")
 	pad.Name = `{side}Pad{index}`
 	pad.Anchored = true
 	pad.Size = Vector3.new(PAD_SIZE, 0.2, PAD_SIZE)
-	pad.Position = slotPosition(side, index) + Vector3.new(0, 0.1, 0)
+	pad.Position = slotPosition(origin, side, index) + Vector3.new(0, 0.1, 0)
 	pad.Color = TEAM_COLORS[side]:Lerp(Color3.new(1, 1, 1), 0.6)
 	pad.Material = Enum.Material.SmoothPlastic
 	pad.Parent = parent
@@ -155,7 +157,7 @@ function Arena.SetMana(view: UnitView, mana: number)
 	view.manaFill.Size = UDim2.fromScale(math.clamp(mana / view.maxMana, 0, 1), 1)
 end
 
-local function makeUnit(parent: Instance, unit: Unit, side: Side, index: number): UnitView
+local function makeUnit(parent: Instance, origin: Vector3, unit: Unit, side: Side, index: number): UnitView
 	local scale = (SCALE_BY_COST[unit.cost] or 1) * (1 + SCALE_PER_STAR * (unit.stars - 1))
 
 	local model = UnitModels.build(unit.name, TEAM_COLORS[side])
@@ -163,7 +165,7 @@ local function makeUnit(parent: Instance, unit: Unit, side: Side, index: number)
 	model:ScaleTo(scale)
 
 	-- Stand on the pad, facing the middle of the arena.
-	local position = slotPosition(side, index) + Vector3.new(0, 0.2 + UnitModels.BOTTOM * scale, 0)
+	local position = slotPosition(origin, side, index) + Vector3.new(0, 0.2 + UnitModels.BOTTOM * scale, 0)
 	local facing = if side == "player" then Vector3.new(0, 0, -1) else Vector3.new(0, 0, 1)
 	model:PivotTo(CFrame.lookAt(position, position + facing))
 	model.Parent = parent
@@ -204,35 +206,34 @@ local function makeUnit(parent: Instance, unit: Unit, side: Side, index: number)
 		side = side,
 	}
 	Arena.SetHealth(view, unit.health)
-	Arena.SetMana(view, 0)
+	Arena.SetMana(view, unit.startingMana)
 	return view
 end
 
--- Draw both boards, replacing whatever was drawn before.
+-- Draw both boards into `folder` around `origin`, replacing whatever was drawn there before.
 -- playerSlots is your board size, so empty slots still get a pad.
-function Arena.Render(playerUnits: { Unit }, enemyUnits: { Unit }, playerSlots: number): ArenaView
-	local old = workspace:FindFirstChild(ARENA_NAME)
-	if old then
-		old:Destroy()
-	end
-
-	local folder = Instance.new("Folder")
-	folder.Name = ARENA_NAME
-	folder.Parent = workspace
+function Arena.Render(
+	folder: Folder,
+	origin: Vector3,
+	playerUnits: { Unit },
+	enemyUnits: { Unit },
+	playerSlots: number
+): ArenaView
+	folder:ClearAllChildren()
 
 	for index = 1, math.max(playerSlots, #playerUnits) do
-		makePad(folder, "player", index)
+		makePad(folder, origin, "player", index)
 	end
 	for index = 1, #enemyUnits do
-		makePad(folder, "enemy", index)
+		makePad(folder, origin, "enemy", index)
 	end
 
 	local view: ArenaView = { folder = folder, player = {}, enemy = {} }
 	for index, unit in playerUnits do
-		table.insert(view.player, makeUnit(folder, unit, "player", index))
+		table.insert(view.player, makeUnit(folder, origin, unit, "player", index))
 	end
 	for index, unit in enemyUnits do
-		table.insert(view.enemy, makeUnit(folder, unit, "enemy", index))
+		table.insert(view.enemy, makeUnit(folder, origin, unit, "enemy", index))
 	end
 	return view
 end
