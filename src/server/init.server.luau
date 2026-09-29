@@ -95,16 +95,22 @@ local function broadcast()
 	end
 end
 
--- Save the finished run for everyone playing. Returns true if anyone set a new best.
-local function recordRun(won: boolean): boolean
+-- Save the finished run for everyone playing, and say so in the message:
+-- "New best!" straight away, then "Saved." once the DataStore confirms it.
+local function recordRun(won: boolean)
 	local result = if won then Enemies.COUNT + 1 else round
-	local anyNewBest = false
 	for _, player in Players:GetPlayers() do
-		if Progress.record(player, result) then
-			anyNewBest = true
+		if result > Progress.get(player) then
+			message ..= " New best!"
+			Progress.record(player, result, function(saved)
+				if phase ~= "gameover" and phase ~= "won" then
+					return -- a new run already started; don't clobber its message
+				end
+				message ..= if saved then " Saved." else " (Not saved, see Output.)"
+				broadcast()
+			end)
 		end
 	end
-	return anyNewBest
 end
 
 local function redraw()
@@ -184,9 +190,7 @@ local function fight()
 		if round >= Enemies.COUNT then
 			phase = "won"
 			message = `You beat all {Enemies.COUNT} rounds with {health} health left. You win!`
-			if recordRun(true) then
-				message ..= " New best!"
-			end
+			recordRun(true)
 			return
 		end
 		message = `Round {round}: Victory! +{ROUND_INCOME} gold`
@@ -196,9 +200,7 @@ local function fight()
 		if health == 0 then
 			phase = "gameover"
 			message = `Knocked out in round {round}. Game over.`
-			if recordRun(false) then
-				message ..= " New best!"
-			end
+			recordRun(false)
 			return
 		end
 		message = `Round {round}: {result}. You lose {damage} health. +{ROUND_INCOME} gold`

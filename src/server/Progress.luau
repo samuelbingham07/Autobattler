@@ -57,33 +57,59 @@ function Progress.get(player: Player): number
 	return bestByUserId[player.UserId] or 0
 end
 
+-- Saves still in flight. The server waits for these before shutting down.
+local pendingSaves = 0
+
 -- Record a finished run. Only saves if it beats the player's best.
--- Returns true if it was a new best.
-function Progress.record(player: Player, result: number): boolean
+-- Returns true if it was a new best. onSaved runs once the save finishes
+-- (or right away with false if saving is disabled).
+function Progress.record(player: Player, result: number, onSaved: ((boolean) -> ())?): boolean
 	if result <= Progress.get(player) then
 		return false
 	end
 	bestByUserId[player.UserId] = result
 
-	if store then
-		local dataStore = store :: DataStore
-		-- UpdateAsync reads the saved value first, so a stale local copy can never
-		-- overwrite a better result. Returning nil cancels the write.
-		task.spawn(function()
-			local ok, err = pcall(function()
-				dataStore:UpdateAsync(key(player), function(saved)
-					if typeof(saved) == "number" and saved >= result then
-						return nil
-					end
-					return result
-				end)
-			end)
-			if not ok then
-				warn(`Couldn't save best for {player.Name}: {err}`)
-			end
-		end)
+	if not store then
+		if onSaved then
+			onSaved(false)
+		end
+		return true
 	end
+
+	local dataStore = store :: DataStore
+	pendingSaves += 1
+	-- UpdateAsync reads the saved value first, so a stale local copy can never
+	-- overwrite a better result. Returning nil cancels the write.
+	task.spawn(function()
+		local ok, err = pcall(function()
+			dataStore:UpdateAsync(key(player), function(saved)
+				if typeof(saved) == "number" and saved >= result then
+					return nil
+				end
+				return result
+			end)
+		end)
+		pendingSaves -= 1
+
+		if ok then
+			print(`Saved best for {player.Name}: {result}`)
+		else
+			warn(`Couldn't save best for {player.Name}: {err}`)
+		end
+		if onSaved then
+			onSaved(ok)
+		end
+	end)
 	return true
 end
+
+-- When the server shuts down (including pressing Stop in Studio), Roblox runs
+-- BindToClose callbacks and waits for them, up to about 30 seconds.
+-- Hold the server open until every save has finished.
+game:BindToClose(function()
+	while pendingSaves > 0 do
+		task.wait(0.1)
+	end
+end)
 
 return Progress
